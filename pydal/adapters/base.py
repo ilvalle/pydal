@@ -86,7 +86,7 @@ class BaseAdapter(ConnectionPool):
     FALSE = 'F'
     T_SEP = ' '
     QUOTE_TEMPLATE = '"%s"'
-
+    cmd_queue = []
 
     types = {
         'boolean': 'CHAR(1)',
@@ -185,6 +185,19 @@ class BaseAdapter(ConnectionPool):
             self.driver = self.db._drivers_available[self.driver_name]
         else:
             raise RuntimeError("no driver available %s" % str(self.drivers))
+
+
+        # DB API 2.0 compliance
+        try:
+            self.driver.OperationalError
+            self._retry_on_failure = True
+        except Exception as e:
+            import traceback
+            print traceback.format_exc()
+            self._retry_on_failure = False
+            self.db.logger.debug("Driver adapter doesn't define the DB API 2.0 OperationalError Exception")
+            pass
+
 
     def log(self, message, table=None):
         """ Logs migrations
@@ -1264,8 +1277,11 @@ class BaseAdapter(ConnectionPool):
         return list(tables)
 
     def commit(self):
+        ret = None
         if self.connection:
-            return self.connection.commit()
+            ret = self.connection.commit()
+        self.cmd_queue = []
+        return ret
 
     def rollback(self):
         if self.connection:
@@ -1298,6 +1314,35 @@ class BaseAdapter(ConnectionPool):
     def create_sequence_and_triggers(self, query, table, **args):
         self.execute(query)
 
+    def cursor_execute2(self, command, *a, **b):
+        """
+        Experimental method to try a reconnection in case of an OperationalError exception
+        It requires a DB-API 2.0 compliant driver
+        """
+        t = self.db._attempts
+        while True:
+            try:
+                ret = self.cursor.execute(command, *a, **b)
+                self.cmd_queue.append({'c':command, 'a':a, 'b':b})
+                return ret
+            except (self.driver.OperationalError) as e:
+                print 'Catch OperationalError exception'
+                t -= 1
+                if t == 0:
+                    raise e
+                try:
+                    self.close(action=None)
+                except:
+                    self.connection = None
+                try:
+                    self.reconnect()
+                    for d in self.cmd_queue:
+                        self.cursor.execute(d['c'], *d['a'], **d['b'])
+                except:
+                    print 'reconnect failed, sleep 1s'
+                    time.sleep(1)
+
+        return
 
     def log_execute(self, *a, **b):
         if not self.connection: raise ValueError(a[0])
@@ -1309,7 +1354,10 @@ class BaseAdapter(ConnectionPool):
             self.db.logger.debug('SQL: %s' % command)
         self.db._lastsql = command
         t0 = time.time()
-        ret = self.cursor.execute(command, *a[1:], **b)
+        if self._retry_on_failure:
+            ret = self.cursor_execute2(command, *a[1:], **b)
+        else:
+            ret = self.cursor.execute(command, *a[1:], **b)
         self.db._timings.append((command,time.time()-t0))
         del self.db._timings[:-TIMINGSSIZE]
         return ret
