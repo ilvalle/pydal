@@ -2214,13 +2214,15 @@ class Rows(object):
         records=[],
         colnames=[],
         compact=True,
-        rawrows=None
+        rawrows=None,
+        compact_table=None,
         ):
         self.db = db
         self.records = records
         self.colnames = colnames
         self.compact = compact
         self.response = rawrows
+        self.compact_table = compact_table
 
     def __repr__(self):
         return '<Rows (%s)>' % len(self.records)
@@ -2293,14 +2295,36 @@ class Rows(object):
         return len(self.records)
 
     def __getslice__(self, a, b):
-        return Rows(self.db,self.records[a:b],self.colnames,compact=self.compact)
+        return Rows(self.db,
+                    self.records[a:b],
+                    self.colnames,
+                    compact=self.compact,
+                    compact_table=self.compact_table)
 
+    def _get_row(self, row, compact=None):
+        compact = self.compact if compact is None else compact
+        keys = row.keys()
+        if ((compact and self.compact_table) or
+            (len(keys) > 1)):
+            # row is already compacted. can be returned as is
+            return row
+        elif (compact and self.compact_table is None and 
+              len(keys) == 1 and keys[0] != '_extra'):
+            # Row is not compacted because it contains virtual/lazy fields
+            # but can be compacted, on the fly. Compact the row and return it
+            return row[row.keys()[0]]
+        elif (compact == False) and (self.compact_table):
+            # Row is compacted but is requested as uncompacted
+            new_row = Row()
+            new_row[self.compact_table] = row
+            return new_row
+
+        # row contains one or more Row containing the key '_extra'
+        return row
+    
     def __getitem__(self, i):
         row = self.records[i]
-        keys = row.keys()
-        if self.compact and len(keys) == 1 and keys[0] != '_extra':
-            return row[row.keys()[0]]
-        return row
+        return self._get_row(row)
 
     def __iter__(self):
         """
@@ -2341,7 +2365,7 @@ class Rows(object):
         filtered by the function `f`
         """
         if not self:
-            return Rows(self.db, [], self.colnames, compact=self.compact)
+            return Rows(self.db, [], self.colnames, compact=self.compact, compact_table=self.compact_table)
         records = []
         if limitby:
             a,b = limitby
@@ -2353,7 +2377,7 @@ class Rows(object):
                 if a<=k: records.append(self.records[i])
                 k += 1
                 if k==b: break
-        return Rows(self.db, records, self.colnames, compact=self.compact)
+        return Rows(self.db, records, self.colnames, compact=self.compact, compact_table=self.compact_table)
 
     def exclude(self, f):
         """
@@ -2361,7 +2385,7 @@ class Rows(object):
         `f`, and returns a new Rows object containing the removed elements
         """
         if not self.records:
-            return Rows(self.db, [], self.colnames, compact=self.compact)
+            return Rows(self.db, [], self.colnames, compact=self.compact, compact_table=self.compact_table)
         removed = []
         i=0
         while i<len(self):
@@ -2371,13 +2395,13 @@ class Rows(object):
                 del self.records[i]
             else:
                 i += 1
-        return Rows(self.db, removed, self.colnames, compact=self.compact)
+        return Rows(self.db, removed, self.colnames, compact=self.compact, compact_table=self.compact_table)
 
     def sort(self, f, reverse=False):
         """
         Returns a list of sorted elements (not sorted in place)
         """
-        rows = Rows(self.db, [], self.colnames, compact=self.compact)
+        rows = Rows(self.db, [], self.colnames, compact=self.compact, compact_table=self.compact_table)
         # When compact=True, iterating over self modifies each record,
         # so when sorting self, it is necessary to return a sorted
         # version of self.records rather than the sorted self directly.
@@ -2449,12 +2473,14 @@ class Rows(object):
             fields: a list of fields to transform (if None, all fields with
                 "represent" attributes will be transformed)
         """
+        print 'render', i, self.records
         if i is None:
             return (self.render(i, fields=fields) for i in range(len(self)))
         if not self.db.has_representer('rows_render'):
             raise RuntimeError("Rows.render() needs a `rows_render` \
                                representer in DAL instance")
-        row = copy.deepcopy(self.records[i])
+        record = self._get_row(self.records[i], compact=False)
+        row = copy.deepcopy(record)
         keys = row.keys()
         tables = [f.tablename for f in fields] if fields \
             else [k for k in keys if k != '_extra']
@@ -2468,9 +2494,8 @@ class Rows(object):
                 row[table][field] = self.db.represent(
                     'rows_render', self.db[table][field], row[table][field],
                     row[table])
-        if self.compact and len(keys) == 1 and keys[0] != '_extra':
-            return row[keys[0]]
-        return row
+        
+        return self._get_row(row)
 
     def as_list(self,
                 compact=True,

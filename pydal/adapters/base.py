@@ -1574,7 +1574,7 @@ class BaseAdapter(ConnectionPool):
         }
 
     def _parse(self, row, tmps, fields, colnames, blob_decode,
-               cacheable, fields_virtual, fields_lazy):
+               cacheable, fields_virtual, fields_lazy, compact_table=None):
         """
         Return a parsed row
         """
@@ -1585,9 +1585,12 @@ class BaseAdapter(ConnectionPool):
             tablename = None
             if tmp:
                 (tablename,fieldname,table,field,ft) = tmp
-                colset = new_row.get(tablename, None)
-                if colset is None:
-                    colset = new_row[tablename] = Row()
+                if compact_table:
+                    colset = new_row
+                else:
+                    colset = new_row.get(tablename, None)
+                    if colset is None:
+                        colset = new_row[tablename] = Row()
 
                 value = self.parse_value(value,ft,blob_decode)
                 if field.filter_out:
@@ -1650,11 +1653,12 @@ class BaseAdapter(ConnectionPool):
         fields_virtual = {}
         fields_lazy = {}
         tmps = []
+        is_compactable = True
         for colname in colnames:
             col_m = self.REGEX_TABLE_DOT_FIELD.match(colname)
-
             if not col_m:
                 tmps.append(None)
+                is_compactable = False
             else:
                 tablename, fieldname = col_m.groups()
                 table = self.db[tablename]
@@ -1666,18 +1670,28 @@ class BaseAdapter(ConnectionPool):
                                                  if isinstance(v,FieldVirtual)]
                     fields_lazy[tablename] = [(f,v) for (f,v) in table.iteritems()
                                               if isinstance(v,FieldMethod)]
-        return (fields_virtual, fields_lazy, tmps)
+        if is_compactable and fields_virtual.keys() == 1:
+            t = fields_virtual.keys()[0]
+            is_compactable = not(fields_virtual[t]) and not(fields_lazy[t])
+        else:
+            is_compactable = False
+
+        return (fields_virtual, fields_lazy, tmps, is_compactable)
 
     def parse(self, rows, fields, colnames, blob_decode=True,
               cacheable = False):
         new_rows = []
-        (fields_virtual, fields_lazy, tmps) = self._parse_expand_colnames(colnames)
+        (fields_virtual, fields_lazy, tmps, is_compactable) = self._parse_expand_colnames(colnames)
+        compact_table = None
+        if is_compactable:
+            compact_table = fields_virtual.keys()[0]
         for row in rows:
-            new_row = self._parse(row, tmps, fields,
+            new_row = self._parse(row, tmps, fields, 
                                   colnames, blob_decode, cacheable,
-                                  fields_virtual, fields_lazy)
+                                  fields_virtual, fields_lazy, compact_table)
             new_rows.append(new_row)
-        rowsobj = Rows(self.db, new_rows, colnames, rawrows=rows)
+
+        rowsobj = Rows(self.db, new_rows, colnames, rawrows=rows, compact_table=compact_table)
 
         # Old stype virtual fields
         for tablename in fields_virtual.keys():
