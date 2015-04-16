@@ -1654,6 +1654,7 @@ class BaseAdapter(ConnectionPool):
         fields_lazy = {}
         tmps = []
         is_compactable = True
+        compact_table = None
         for colname in colnames:
             col_m = self.REGEX_TABLE_DOT_FIELD.match(colname)
             if not col_m:
@@ -1672,19 +1673,16 @@ class BaseAdapter(ConnectionPool):
                                               if isinstance(v,FieldMethod)]
         if is_compactable and fields_virtual.keys() == 1:
             t = fields_virtual.keys()[0]
-            is_compactable = not(fields_virtual[t]) and not(fields_lazy[t])
-        else:
-            is_compactable = False
+            if not(fields_virtual[t]) and not(fields_lazy[t]):
+                compact_table = t
 
-        return (fields_virtual, fields_lazy, tmps, is_compactable)
+        return (fields_virtual, fields_lazy, tmps, compact_table)
 
     def parse(self, rows, fields, colnames, blob_decode=True,
               cacheable = False):
         new_rows = []
-        (fields_virtual, fields_lazy, tmps, is_compactable) = self._parse_expand_colnames(colnames)
-        compact_table = None
-        if is_compactable:
-            compact_table = fields_virtual.keys()[0]
+        (fields_virtual, fields_lazy, tmps, compact_table) = self._parse_expand_colnames(colnames)
+
         for row in rows:
             new_row = self._parse(row, tmps, fields, 
                                   colnames, blob_decode, cacheable,

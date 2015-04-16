@@ -10,6 +10,7 @@ import os
 import shutil
 import sys
 import types
+from abc import ABCMeta
 
 from ._compat import StringIO, ogetattr, osetattr, pjoin, exists, hashlib_md5
 from ._globals import DEFAULT, IDENTITY, AND, OR
@@ -2198,8 +2199,37 @@ class VirtualCommand(object):
     def __call__(self,*args,**kwargs):
         return self.method(self.row,*args,**kwargs)
 
+class BasicRow(object):
+    """
+    Abstract class for Rows and IterRows
+    """
+    __metaclass__ = ABCMeta
 
-class Rows(object):
+    def _get_row(self, row, compact=None):
+        compact = self.compact if compact is None else compact
+        keys = row.keys()
+        if ((compact and self.compact_table) or (len(keys) > 1)):
+            # row can be returned as is
+            return row
+        elif (compact and self.compact_table is None and len(keys) == 1 and
+              keys[0] != '_extra'):
+            # Row is not compacted because it contains virtual/lazy fields
+            # but can be compacted, on the fly. Compact the row and return it
+            return row[keys[0]]
+        elif (compact == False) and (self.compact_table):
+            # Row is compacted but is requested as uncompacted
+            new_row = Row()
+            new_row[self.compact_table] = row
+            return new_row
+
+        # row contains one or more Row containing the key '_extra'
+        # it isn't compacted and cannot be compacted
+        return row
+
+    def __nonzero__(self):
+        return True if self.first() is not None else False
+
+class Rows(BasicRow):
 
     """
     A wrapper for the return value of a select. It basically represents a table.
@@ -2216,7 +2246,7 @@ class Rows(object):
         compact=True,
         rawrows=None,
         compact_table=None,
-        ):
+    ):
         self.db = db
         self.records = records
         self.colnames = colnames
@@ -2227,7 +2257,7 @@ class Rows(object):
     def __repr__(self):
         return '<Rows (%s)>' % len(self.records)
 
-    def setvirtualfields(self,**keyed_virtualfields):
+    def setvirtualfields(self, **keyed_virtualfields):
         """
         For reference::
 
@@ -2251,7 +2281,7 @@ class Rows(object):
         if not keyed_virtualfields:
             return self
         for row in self.records:
-            for (tablename,virtualfields) in keyed_virtualfields.iteritems():
+            for (tablename, virtualfields) in keyed_virtualfields.iteritems():
                 attributes = dir(virtualfields)
                 if not tablename in row:
                     box = row[tablename] = Row()
@@ -2260,10 +2290,10 @@ class Rows(object):
                 updated = False
                 for attribute in attributes:
                     if attribute[0] != '_':
-                        method = getattr(virtualfields,attribute)
+                        method = getattr(virtualfields, attribute)
                         if hasattr(method,'__lazy__'):
-                            box[attribute]=VirtualCommand(method,row)
-                        elif type(method)==types.MethodType:
+                            box[attribute] = VirtualCommand(method, row)
+                        elif type(method) == types.MethodType:
                             if not updated:
                                 virtualfields.__dict__.update(row)
                                 updated = True
@@ -2286,11 +2316,6 @@ class Rows(object):
         return Rows(self.db,records,self.colnames,
                     compact=self.compact or other.compact)
 
-    def __nonzero__(self):
-        if len(self.records):
-            return 1
-        return 0
-
     def __len__(self):
         return len(self.records)
 
@@ -2301,27 +2326,6 @@ class Rows(object):
                     compact=self.compact,
                     compact_table=self.compact_table)
 
-    def _get_row(self, row, compact=None):
-        compact = self.compact if compact is None else compact
-        keys = row.keys()
-        if ((compact and self.compact_table) or
-            (len(keys) > 1)):
-            # row is already compacted. can be returned as is
-            return row
-        elif (compact and self.compact_table is None and 
-              len(keys) == 1 and keys[0] != '_extra'):
-            # Row is not compacted because it contains virtual/lazy fields
-            # but can be compacted, on the fly. Compact the row and return it
-            return row[row.keys()[0]]
-        elif (compact == False) and (self.compact_table):
-            # Row is compacted but is requested as uncompacted
-            new_row = Row()
-            new_row[self.compact_table] = row
-            return new_row
-
-        # row contains one or more Row containing the key '_extra'
-        return row
-    
     def __getitem__(self, i):
         row = self.records[i]
         return self._get_row(row)
@@ -2473,7 +2477,6 @@ class Rows(object):
             fields: a list of fields to transform (if None, all fields with
                 "represent" attributes will be transformed)
         """
-        print 'render', i, self.records
         if i is None:
             return (self.render(i, fields=fields) for i in range(len(self)))
         if not self.db.has_representer('rows_render'):
@@ -2709,15 +2712,15 @@ class Rows(object):
     json = as_json
 
 
-class IterRows(object):
-
+class IterRows(BasicRow):
     def __init__(self, db, sql, fields, colnames, blob_decode, cacheable):
         self.db = db
         self.fields = fields
         self.colnames = colnames
         self.blob_decode = blob_decode
         self.cacheable = cacheable
-        (self.fields_virtual, self.fields_lazy, self.tmps) = self.db._adapter._parse_expand_colnames(colnames)
+        (self.fields_virtual, self.fields_lazy,
+         self.tmps, self.compact_table) = self.db._adapter._parse_expand_colnames(colnames)
         self.db._adapter.cursor.execute(sql)
         self._head = None
         self.last_item = None
@@ -2731,17 +2734,9 @@ class IterRows(object):
         row = self.db._adapter._parse(db_row, self.tmps, self.fields,
                                       self.colnames, self.blob_decode,
                                       self.cacheable, self.fields_virtual,
-                                      self.fields_lazy)
-        if self.compact:
-            # The following is to translate
-            # <Row {'t0': {'id': 1L, 'name': 'web2py'}}>
-            # in
-            # <Row {'id': 1L, 'name': 'web2py'}>
-            # normally accomplished by Rows.__get_item__
-            keys = row.keys()
-            if len(keys) == 1 and keys[0] != '_extra':
-                row = row[row.keys()[0]]
-        return row
+                                      self.fields_lazy, compact_table=self.compact_table)
+
+        return self._get_row(row)
 
     def __iter__(self):
         if self._head:
@@ -2761,11 +2756,8 @@ class IterRows(object):
                 return None
         return self._head
 
-    def __nonzero__(self):
-        return True if self.first() is not None else False
-
     def __getitem__(self, key):
-        if not isinstance( key, ( int, long ) ):
+        if not isinstance(key, (int, long)):
             raise TypeError
 
         if key == self.last_item_id:
