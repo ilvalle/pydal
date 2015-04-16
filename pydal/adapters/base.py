@@ -1671,7 +1671,7 @@ class BaseAdapter(ConnectionPool):
                                                  if isinstance(v,FieldVirtual)]
                     fields_lazy[tablename] = [(f,v) for (f,v) in table.iteritems()
                                               if isinstance(v,FieldMethod)]
-        if is_compactable and fields_virtual.keys() == 1:
+        if is_compactable and len(fields_virtual.keys()) == 1:
             t = fields_virtual.keys()[0]
             if not(fields_virtual[t]) and not(fields_lazy[t]):
                 compact_table = t
