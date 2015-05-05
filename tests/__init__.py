@@ -5,6 +5,7 @@ if NOSQL:
 else:
     from .sql import *
     from .base import *
+    from .references import *
 
 from .validation import *
 from .caching import TestCache
