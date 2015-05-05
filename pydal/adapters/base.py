@@ -247,7 +247,24 @@ class BaseAdapter(with_metaclass(AdapterMeta, ConnectionPool)):
         tablename = table._tablename
         sortable = 0
         types = self.types
+        table_fields = []
+        # Remove any reference field pointing to a table not defined yet
         for field in table:
+            field_type = field.type
+            if field_type.startswith('reference'):
+                referenced = field_type[10:].strip()
+                if referenced not in db.postcreation_fields:
+                    db.postcreation_fields[referenced] = {}
+                if (referenced not in db.tables and referenced != tablename and
+                    referenced not in db.postcreation_fields[referenced]):
+                    db.postcreation_fields[referenced][tablename] = {'table': table,
+                                                                     'migrate': migrate,
+                                                                     'fake_migrate': fake_migrate,
+                                                                     'polymodel': polymodel}
+                    continue
+            table_fields.append(field)
+        
+        for field in table_fields:
             sortable += 1
             field_name = field.name
             field_type = field.type

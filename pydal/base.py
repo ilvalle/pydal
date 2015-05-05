@@ -407,7 +407,7 @@ class DAL(with_metaclass(MetaDAL, Serializable, BasicStorage)):
         self._attempts = attempts
         self._do_connect = do_connect
         self._ignore_field_case = ignore_field_case
-
+        self.postcreation_fields = {}
         if not str(attempts).isdigit() or attempts < 0:
             attempts = 5
         if uri:
@@ -819,6 +819,16 @@ class DAL(with_metaclass(MetaDAL, Serializable, BasicStorage)):
             table = self.lazy_define_table(tablename,*fields,**args)
         if not tablename in self.tables:
             self.tables.append(tablename)
+
+        #if not self._lazy_tables and tablename not in self._LAZY_TABLES:
+            # Post creation of tables. It requires self.tables to be populated
+        if tablename in self.postcreation_fields:
+            for key, e in self.postcreation_fields[tablename].items():
+                self._adapter.create_table(table=e['table'],
+                                           migrate=e['migrate'],
+                                           fake_migrate=e['fake_migrate'],
+                                           polymodel=e['polymodel'])
+            del self.postcreation_fields[tablename]
         return table
 
     def lazy_define_table(

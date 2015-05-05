@@ -1786,10 +1786,10 @@ class TestQuoting(unittest.TestCase):
         t3 = db.define_table('t3', Field('f', length=100), Field('t0_Code', t0.Code), primarykey=['f'])
         t4 = db.define_table('t4', Field('f', length=100), Field('t0', t0), primarykey=['f'])
 
-        try:
-            t5 = db.define_table('t5', Field('f', length=100), Field('t0', 'reference no_table_wrong_reference'), primarykey=['f'])
-        except Exception as e:
-            self.assertTrue(isinstance(e, KeyError))
+#        try:
+#            t5 = db.define_table('t5', Field('f', length=100), Field('t0', 'reference no_table_wrong_reference'), primarykey=['f'])
+#        except Exception as e:
+#            self.assertTrue(isinstance(e, KeyError))
 
         if DEFAULT_URI.startswith('mssql'):
             #there's no drop cascade in mssql
