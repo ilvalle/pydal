@@ -1813,6 +1813,11 @@ class Query(Serializable):
         else:
             return self.__dict__
 
+    def __getattr__(self, attr):
+        if attr in dir(Set):
+            set_obj = Set(self.db, self)
+            return getattr(set_obj, attr)
+        raise AttributeError(attr)
 
 class Set(Serializable):
 
